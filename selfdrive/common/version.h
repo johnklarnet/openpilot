@@ -1,1 +1,1 @@
-#define COMMA_VERSION "0.8.5-release"
+#define COMMA_VERSION "LBR.0.8.5.R2"

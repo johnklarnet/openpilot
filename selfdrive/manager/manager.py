@@ -34,6 +34,7 @@ def manager_init():
     ("CompletedTrainingVersion", "0"),
     ("HasAcceptedTerms", "0"),
     ("OpenpilotEnabledToggle", "1"),
+    ("lbr_exclusion_zone", "null"),
   ]
   if not PC:
     default_params.append(("LastUpdateTime", datetime.datetime.utcnow().isoformat().encode('utf8')))
@@ -134,7 +135,7 @@ def manager_thread():
     sm.update()
     not_run = ignore[:]
 
-    if sm['deviceState'].freeSpacePercent < 5:
+    if sm['deviceState'].freeSpacePercent < 5 or sm['deviceState'].geoRecordingOff:
       not_run.append("loggerd")
 
     started = sm['deviceState'].started

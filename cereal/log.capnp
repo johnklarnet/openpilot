@@ -306,6 +306,7 @@ struct DeviceState @0xa4d8b5af2aa492eb {
   memoryTempC @28 :Float32;
   batteryTempC @29 :Float32;
   ambientTempC @30 :Float32;
+  geoRecordingOff @33 :Bool;
   thermalStatus @14 :ThermalStatus;
 
   enum ThermalStatus {
