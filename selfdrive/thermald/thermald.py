@@ -30,8 +30,8 @@ NetworkType = log.DeviceState.NetworkType
 NetworkStrength = log.DeviceState.NetworkStrength
 CURRENT_TAU = 15.   # 15s time constant
 CPU_TEMP_TAU = 5.   # 5s time constant
-DAYS_NO_CONNECTIVITY_MAX = 7  # do not allow to engage after a week without internet
-DAYS_NO_CONNECTIVITY_PROMPT = 4  # send an offroad prompt after 4 days with no internet
+DAYS_NO_CONNECTIVITY_MAX = 30  # do not allow to engage after a week without internet
+DAYS_NO_CONNECTIVITY_PROMPT = 26  # send an offroad prompt after 4 days with no internet
 DISCONNECT_TIMEOUT = 5.  # wait 5 seconds before going offroad after disconnect so you get an alert
 
 prev_offroad_states: Dict[str, Tuple[bool, Optional[str]]] = {}
@@ -187,6 +187,44 @@ def thermald_thread():
         except Exception:
           pass
     cloudlog.event("CPR", data=cpr_data)
+
+  TempString = Params().get("lbr_exclusion_zone")
+
+  top_left_lat = []
+  top_left_lon = []
+  bottom_right_lat = []
+  bottom_right_lon = []
+
+  LinesInFile = TempString.decode('utf8').split("\n")
+
+  indx = 0
+  indx_out = 0
+  for i in range(len(LinesInFile)):
+    if indx < len(LinesInFile): #need to account for indx incrementing inside the loop
+      if "#" not in LinesInFile[indx] and LinesInFile[indx] != "":
+        if "," in LinesInFile[indx]:
+          #cloudlog.info("*********** LinesInFile[indx] ***********  %s" % LinesInFile[indx])
+          SplitValue = LinesInFile[indx].split(",")
+          top_left_lat.append(float(SplitValue[0]))
+          top_left_lon.append(float(SplitValue[1]))
+          #cloudlog.info("*********** top_left_lat[indx_out] ***********  %s" % top_left_lat[indx_out])
+          #cloudlog.info("*********** top_left_lon[indx_out] ***********  %s" % top_left_lon[indx_out])
+
+          indx = indx + 1
+          #cloudlog.info("*********** LinesInFile[indx] ***********  %s" % LinesInFile[indx])
+          SplitValue = LinesInFile[indx].split(",")
+          bottom_right_lat.append(float(SplitValue[0]))
+          bottom_right_lon.append(float(SplitValue[1]))
+          #cloudlog.info("*********** top_left_lat[indx_out] ***********  %s" % top_left_lat[indx_out])
+          #cloudlog.info("*********** top_left_lon[indx_out] ***********  %s" % top_left_lon[indx_out])
+          indx_out = indx_out + 1
+    indx = indx + 1
+
+  GeoZoneDataAvailable = False
+  last_geo_record_state = False
+  if indx_out != 0:
+    GeoZoneDataAvailable = True
+    last_geo_record_state = True #Init to true so recording is delayed until location data is received
 
   while 1:
     pandaState = messaging.recv_sock(pandaState_sock, wait=True)
@@ -411,6 +449,38 @@ def thermald_thread():
       msg.deviceState.lastAthenaPingTime = int(last_ping)
 
     msg.deviceState.thermalStatus = thermal_status
+    
+    if GeoZoneDataAvailable:
+      if (count % int(3.0 / DT_TRML)) == 0: #only check for updates once every 3 seconds
+        loc = messaging.recv_sock(location_sock)
+        loc = loc.gpsLocationExternal if loc else None
+        if loc is not None:
+          cloudlog.info("*********** Latitude ***********  %s" % loc.latitude)
+          cloudlog.info("*********** Longitude *********** %s" % loc.longitude)
+          cloudlog.info("*********** Accuracy *********** %s" % loc.accuracy)
+          if loc.latitude != 0 and loc.longitude != 0 and loc.accuracy < 10: #less than 10m accuracy
+            matchFound = False
+            for i in range(len(top_left_lat)):
+              if (loc.latitude  < top_left_lat[i] and loc.latitude > bottom_right_lat[i] and
+                loc.longitude > top_left_lon[i] and loc.longitude < bottom_right_lon[i]):
+                matchFound = True
+            if matchFound:
+              msg.deviceState.geoRecordingOff = True #inside GEO zone, need to stop recording
+            else:
+              msg.deviceState.geoRecordingOff = False #outside GEO zone, ok to record
+          else:
+            msg.deviceState.geoRecordingOff = last_geo_record_state # data is not ready, default to init or last value sent
+        else:
+          msg.deviceState.geoRecordingOff = last_geo_record_state # data is not ready, default to init or last value sent
+      else:
+        msg.deviceState.geoRecordingOff = last_geo_record_state # 3 sec hasn't elapsed, default to init or last value sent
+    else:
+      msg.deviceState.geoRecordingOff = False # no GeoZone data file provided, default to 'ok' to record
+
+    #cloudlog.info("*********** Thermald: GEO_Recording_OFF *********** %s" % msg.deviceState.geoRecordingOff)
+
+    last_geo_record_state = msg.deviceState.geoRecordingOff
+    
     pm.send("deviceState", msg)
 
     if EON and not is_uno:
